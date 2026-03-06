@@ -23,7 +23,7 @@
 - Topic Strategy: 실시간 센서 데이터 수집을 위한 sensor-raw 토픽 최적화.
 
 ### 2. Network Stability (Static Endpoint)
-- Fixed Infrastructure: 서비스 재배포 시 IP가 휘발되는 문제를 방지하기 위해 ClusterIP를 명시적으로 할당(10.100.195.96).
+- Fixed Infrastructure: 서비스 재배포 시 IP가 휘발되는 문제를 방지하기 위해 ClusterIP를 명시적으로 할당(10.100.100.82).
 
 - Advertised Listeners: K8s 네트워크 내부 도메인 해석 이슈를 해결하기 위해 브로커의 광고 주소를 고정 IP로 매핑.
 
