@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-kafka
+  namespace: parkit
+spec:
+  clusterIP: 10.100.100.82 # IP를 고정하여 클라이언트 수정 최소화
+  selector:
+    app: kafka
+  ports:
+    - protocol: TCP
+      port: 9092
+      targetPort: 9092
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: my-kafka-controller
+  namespace: parkit
+spec:
+  serviceName: my-kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      securityContext:
+        runAsUser: 0
+        fsGroup: 0
+      containers:
+      - name: kafka
+        image: public.ecr.aws/bitnami/kafka:3.6.1-debian-11-r0 # [중요] 검증된 버전 사용
+        env:
+        - name: KAFKA_CFG_NODE_ID
+          value: "0"
+        - name: KAFKA_CFG_PROCESS_ROLES
+          value: "controller,broker"
+        - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+          value: "0@127.0.0.1:9093"
+        - name: KAFKA_CFG_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_CFG_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://10.100.100.82:9092" # 서비스 IP와 일치시킬 것
+        - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+        - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+        - name: ALLOW_PLAINTEXT_LISTENER
+          value: "yes"
+        - name: KAFKA_KRAFT_CLUSTER_ID
+          value: "L69In9iZQu69V99A99999w" # 고유 클러스터 ID
+        volumeMounts:
+        - name: data
+          mountPath: /bitnami/kafka
+      volumes:
+      - name: data
+        emptyDir: {}
