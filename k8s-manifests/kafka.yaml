@@ -4,7 +4,6 @@ metadata:
   name: my-kafka
   namespace: parkit
 spec:
-  clusterIP: 10.100.100.82 # IP를 고정하여 클라이언트 수정 최소화
   selector:
     app: kafka
   ports:
@@ -16,7 +15,7 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: my-kafka-controller
+  name: kafka-broker
   namespace: parkit
 spec:
   serviceName: my-kafka
@@ -41,11 +40,11 @@ spec:
         - name: KAFKA_CFG_PROCESS_ROLES
           value: "controller,broker"
         - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
-          value: "0@127.0.0.1:9093"
+          value: "0@0.0.0.0:9093"
         - name: KAFKA_CFG_LISTENERS
           value: "PLAINTEXT://:9092,CONTROLLER://:9093"
         - name: KAFKA_CFG_ADVERTISED_LISTENERS
-          value: "PLAINTEXT://10.100.100.82:9092" # 서비스 IP와 일치시킬 것
+          value: "PLAINTEXT://10.106.192.232:9092"
         - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
           value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
         - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES

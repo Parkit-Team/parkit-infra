@@ -56,11 +56,10 @@
 ```
 .
 ├── k8s-manifests/
-│   ├── kafka-single.yaml      # 최종 Kafka 설정 (Static IP & Advertised Listeners)
+│   ├── kafka.yaml      # 최종 Kafka 설정 (Static IP & Advertised Listeners)
 │   └── argocd-apps.yaml       # ArgoCD Application 리소스
 ├── sensor-bridge/             # 인프라 검증용 Pub/Sub 코드
 │   ├── producer.py            # Webots 데이터 송신 (Python)
-│   └── consumer.py            # 데이터 수집 검증 (Python)
 └── README.md
 ```
 
