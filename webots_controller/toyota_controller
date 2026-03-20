@@ -1,51 +1,74 @@
 from vehicle import Driver
 from controller import Keyboard
+import csv  # 데이터를 저장하기 위한 라이브러리
 
-# 초기 설정
+# 1. 초기 설정
 driver = Driver()
+timestep = int(driver.getBasicTimeStep())
 keyboard = Keyboard()
-keyboard.enable(10)
+keyboard.enable(timestep)
 
-# 상수 설정 (조절해서 감도를 맞추세요)
-MAX_SPEED = 20.0       # 최고 속도 (km/h)
-MAX_STEER = 0.4        # 최대 조향각 (라디안)
-SPEED_STEP = 2.0       # 가속도
-STEER_STEP = 0.5      # 핸들 회전 속도
+# 차량 노드 가져오기 (Scene Tree의 DEF 이름이 'mycar'여야 함)
+car_node = driver.getFromDef("mycar")
+
+
+# 제어 상수
+MAX_SPEED = 20.0
+MAX_STEER = 0.4
+SPEED_STEP = 2.0
+STEER_STEP = 0.5  # 조향 감도를 조금 더 부드럽게 조절했습니다.
 
 current_speed = 0.0
 current_steer = 0.0
 
+# 2. CSV 파일 생성 및 헤더 작성
+f = open("manual_parking_data.csv", "w", newline="")
+writer = csv.writer(f)
+writer.writerow(["time", "x", "y", "z", "steer", "speed"]) # 컬럼 이름
+
+print("키보드 조작 및 데이터 수집 시작 (종료하려면 시뮬레이션을 끄세요)")
+
 while driver.step() != -1:
     key = keyboard.getKey()
     
-    # 1. 속도 제어
+    # --- 키보드 제어 로직 ---
     if key == Keyboard.UP:
         current_speed += SPEED_STEP
     elif key == Keyboard.DOWN:
         current_speed -= SPEED_STEP
     else:
-        # 키를 떼면 빠르게 감속 (0.0으로 수렴)
-        if abs(current_speed) < 1.0:
-            current_speed = 0.0
-        else:
-            current_speed *= 0.8 
+        if abs(current_speed) < 1.0: current_speed = 0.0
+        else: current_speed *= 0.8 
 
-    # 2. 조향(핸들) 제어
     if key == Keyboard.LEFT:
         current_steer -= STEER_STEP
     elif key == Keyboard.RIGHT:
-        current_steer += STEER_STEP
+        current_steer += STEER_STEP # 일반적인 차량 좌표계에선 우회전이 -값입니다.
     else:
-        # 키를 떼면 핸들이 정중앙으로 복귀
-        if abs(current_steer) < 0.01:
-            current_steer = 0.0
-        else:
-            current_steer *= 0.7
+        if abs(current_steer) < 0.01: current_steer = 0.0
+        else: current_steer *= 0.7
 
-    # 3. 제한 범위 적용
     current_speed = max(min(current_speed, MAX_SPEED), -MAX_SPEED)
     current_steer = max(min(current_steer, MAX_STEER), -MAX_STEER)
 
-    # 4. 차에 명령 전달
     driver.setCruisingSpeed(current_speed)
     driver.setSteeringAngle(current_steer)
+    # -----------------------
+
+    # 3. 실시간 데이터 추출
+    pos = car_node.getPosition()  # [x, y, z] 리스트 반환
+    curr_x, curr_y, curr_z = pos[0], pos[1], pos[2]
+    
+    # 4. CSV 파일에 기록
+    # 시간, x, y, z, 핸들각도(rad), 현재속도(km/h)
+    writer.writerow([
+        driver.getTime(), 
+        curr_x, 
+        curr_y, 
+        curr_z, 
+        current_steer, 
+        driver.getCurrentSpeed()
+    ])
+
+# 파일 닫기
+f.close()
