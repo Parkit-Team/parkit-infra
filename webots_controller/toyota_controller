@@ -1,0 +1,180 @@
+from vehicle import Driver
+from controller import Keyboard
+import csv
+import math
+import json
+from kafka import KafkaProducer
+
+
+# 1. 초기 설정해
+driver = Driver()
+timestep = int(driver.getBasicTimeStep())
+keyboard = Keyboard()
+keyboard.enable(timestep)
+
+kafka_producer = KafkaProducer(
+    bootstrap_servers=['192.168.201.98:50031'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+    api_version=(3, 6, 1)
+)
+
+# 차량 노드 가져오기 (위치 기록용)
+car_node = driver.getFromDef("mycar")
+
+# --- [추가] 모든 거리 센서 초기화 ---
+# Webots Scene Tree에 설정한 이름과 반드시 일치해야 합니다.
+sensor_names = [
+    "front_left_sensor", "front_right_sensor", "front_mid_sensor",
+    "left_sensor", "right_sensor", 
+    "rear_left_sensor", "rear_right_sensor", "rear_mid_sensor"
+]
+sensors = {}
+
+for name in sensor_names:
+    sensors[name] = driver.getDevice(name)
+    sensors[name].enable(timestep)
+# ----------------------------------
+
+# 제어 상수
+STEERING_RATIO = 12
+MAX_SPEED = 20.0
+MAX_STEER = 0.78
+SPEED_STEP = 2.0
+STEER_STEP = 0.5 # 부드러운 조향을 위해 값을 낮췄습니다.
+
+current_speed = 0.0
+current_steer = 0.0
+
+# 2. CSV 파일 생성 및 헤더 작성
+# 전방(f_dist)과 후방(re_dist)은 통합된 값을 저장합니다.
+f = open("parking_sensor_data.csv", "w", newline="")
+writer = csv.writer(f)
+writer.writerow(["time", "x", "y", "z", "steer", "wheel_degree", "handle_angle", "speed", "front_dist", "left_dist", "right_dist", "rear_dist"])
+
+print("전방/측면/후방 센서 데이터 수집 시작...")
+
+SAVE_INTERVAL = 0.5
+last_save_time = -SAVE_INTERVAL
+
+while driver.step() != -1:
+    current_time = driver.getTime()
+    key = keyboard.getKey()
+    
+    # --- 키보드 제어 로직 ---
+    if key == Keyboard.UP:
+        current_speed += SPEED_STEP
+    elif key == Keyboard.DOWN:
+        current_speed -= SPEED_STEP
+    else:
+        if abs(current_speed) < 1.0: current_speed = 0.0
+        else: current_speed *= 0.6
+
+    if key == Keyboard.LEFT:
+        current_steer -= STEER_STEP
+    elif key == Keyboard.RIGHT:
+        current_steer += STEER_STEP
+    else:
+        if abs(current_steer) < 0.01: current_steer = 0.0
+        else: current_steer *= 0.7
+
+    current_speed = max(min(current_speed, MAX_SPEED), -MAX_SPEED)
+    current_steer = max(min(current_steer, MAX_STEER), -MAX_STEER)
+
+    driver.setCruisingSpeed(current_speed)
+    driver.setSteeringAngle(current_steer)
+    
+    #바퀴와 핸들 각도 계산
+    # 1)Webots 제어값 (라디안)
+    wheel_radian = current_steer 
+    
+    # 2) 바퀴의 실제 꺾임 각도 (Degree)
+    wheel_degree = math.degrees(wheel_radian)
+    
+    # 3) 실제 핸들(스티어링 휠)의 회전 각도
+    handle_angle = wheel_degree * STEERING_RATIO
+
+
+    # --- 3. 실시간 센서 데이터 추출 ---
+    # 전방 통합 (좌/우/중간 중 최솟값)
+    fr_left = sensors["front_left_sensor"].getValue()
+    fr_right = sensors["front_right_sensor"].getValue()
+    fr_mid = sensors["front_mid_sensor"].getValue()
+    
+    f_dist = min(fr_left, fr_right, fr_mid)
+    
+    # 측면 데이터
+    l_dist = sensors["left_sensor"].getValue()
+    r_dist = sensors["right_sensor"].getValue()
+    
+    # 후방 통합 (좌/우/중간 중 최솟값)
+    re_left = sensors["rear_left_sensor"].getValue()
+    re_right = sensors["rear_right_sensor"].getValue()
+    re_mid = sensors["rear_mid_sensor"].getValue()
+    
+    re_dist = min(re_left, re_right, re_mid)
+    
+    # 내 차의 현재 위치 정보
+    pos = car_node.getPosition()
+    
+    # 4. CSV 파일에 기록
+    if current_time - last_save_time >= SAVE_INTERVAL:
+        writer.writerow([
+            f"{driver.getTime():.2f}",
+            f"{pos[0]:.6f}", f"{pos[1]:.6f}", f"{pos[2]:.6f}",
+            f"{current_steer:.6f}",
+            f"{wheel_degree: .6f}",
+            f"{handle_angle:.2f}",
+            f"{driver.getCurrentSpeed():.6f}",
+            f"{f_dist:.6f}",
+            f"{l_dist:.6f}",
+            f"{r_dist:.6f}",
+            f"{re_dist:.6f}"
+        ])
+        f.flush()
+        last_save_time = current_time
+        
+        data = {
+            "time": round(driver.getTime(), 2),
+            "x": round(pos[0], 6),
+            "y": round(pos[1], 6),
+            "z": round(pos[2], 6),
+            "steer": current_steer,
+            "wheel_degree": int(wheel_degree),
+            "handle_angle": int(handle_angle),
+            "speed": round(driver.getCurrentSpeed(), 6),
+            "front_dist": f_dist,  
+            "left_dist": l_dist, 
+            "right_dist": r_dist, 
+            "rear_dist": re_dist 
+        }
+
+        kafka_producer.send('sensor-topic', value=data)
+        kafka_producer.flush()
+        print(f"[Kafka 전송] time={data['time']} | speed={data['speed']:.2f} | front={data['front_dist']:.2f} | left={data['left_dist']:.2f} | right={data['right_dist']:.2f} | rear={data['rear_dist']:.2f}")
+    # (선택사항) 장애물이 1m 이내로 가까워지면 경고
+    # --- 5. 방향별 충돌 경고 (1.0m 이내일 때) ---
+    warning_msgs = []
+    
+    if f_dist < 2.0:
+        if fr_left < 1.8 or fr_right < 1.8:
+            warning_msgs.append(f"전방 모서리 주의! (L:{fr_left:.2f}m | R:{fr_right:.2f}m)")
+        else:
+            warning_msgs.append(f"전방 중앙 주의! ({f_dist:.2f}m)")
+    if re_dist < 2.0:
+        if re_left < 1.8 or re_right < 1.8:
+            warning_msgs.append(f"후방 모서리 주의! (L:{re_left:.2f}m | R:{re_right:.2f}m)")
+        else:
+            warning_msgs.append(f"후방({re_dist:.2f}m)")
+    if l_dist < 0.8: # 측면은 차폭이 좁으니 조금 더 타이트하게(0.5m) 설정해봤어요
+        warning_msgs.append(f"좌측({l_dist:.2f}m)")
+    if r_dist < 0.8:
+        warning_msgs.append(f"우측({r_dist:.2f}m)")
+
+    # 위험 요소가 하나라도 있다면 출력
+    if warning_msgs:
+        print(f"[충돌 위험] " + " | ".join(warning_msgs))
+
+# 파일 닫기
+f.close()
+kafka_producer.close()
+print("데이터 전 완료.")
