@@ -1,0 +1,51 @@
+from vehicle import Driver
+from controller import Keyboard
+
+# 초기 설정
+driver = Driver()
+keyboard = Keyboard()
+keyboard.enable(10)
+
+# 상수 설정 (조절해서 감도를 맞추세요)
+MAX_SPEED = 20.0       # 최고 속도 (km/h)
+MAX_STEER = 0.4        # 최대 조향각 (라디안)
+SPEED_STEP = 2.0       # 가속도
+STEER_STEP = 0.5      # 핸들 회전 속도
+
+current_speed = 0.0
+current_steer = 0.0
+
+while driver.step() != -1:
+    key = keyboard.getKey()
+    
+    # 1. 속도 제어
+    if key == Keyboard.UP:
+        current_speed += SPEED_STEP
+    elif key == Keyboard.DOWN:
+        current_speed -= SPEED_STEP
+    else:
+        # 키를 떼면 빠르게 감속 (0.0으로 수렴)
+        if abs(current_speed) < 1.0:
+            current_speed = 0.0
+        else:
+            current_speed *= 0.8 
+
+    # 2. 조향(핸들) 제어
+    if key == Keyboard.LEFT:
+        current_steer -= STEER_STEP
+    elif key == Keyboard.RIGHT:
+        current_steer += STEER_STEP
+    else:
+        # 키를 떼면 핸들이 정중앙으로 복귀
+        if abs(current_steer) < 0.01:
+            current_steer = 0.0
+        else:
+            current_steer *= 0.7
+
+    # 3. 제한 범위 적용
+    current_speed = max(min(current_speed, MAX_SPEED), -MAX_SPEED)
+    current_steer = max(min(current_steer, MAX_STEER), -MAX_STEER)
+
+    # 4. 차에 명령 전달
+    driver.setCruisingSpeed(current_speed)
+    driver.setSteeringAngle(current_steer)
