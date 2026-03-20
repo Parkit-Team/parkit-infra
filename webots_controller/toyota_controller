@@ -1,14 +1,22 @@
 from vehicle import Driver
 from controller import Keyboard
 import csv
-#조향각 계산을 위해
 import math
+import json
+from kafka import KafkaProducer
+
 
 # 1. 초기 설정해
 driver = Driver()
 timestep = int(driver.getBasicTimeStep())
 keyboard = Keyboard()
 keyboard.enable(timestep)
+
+kafka_producer = KafkaProducer(
+    bootstrap_servers=['192.168.201.98:50031'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+    api_version=(3, 6, 1)
+)
 
 # 차량 노드 가져오기 (위치 기록용)
 car_node = driver.getFromDef("mycar")
@@ -45,7 +53,11 @@ writer.writerow(["time", "x", "y", "z", "steer", "wheel_degree", "handle_angle",
 
 print("전방/측면/후방 센서 데이터 수집 시작...")
 
+SAVE_INTERVAL = 0.5
+last_save_time = -SAVE_INTERVAL
+
 while driver.step() != -1:
+    current_time = driver.getTime()
     key = keyboard.getKey()
     
     # --- 키보드 제어 로직 ---
@@ -105,19 +117,40 @@ while driver.step() != -1:
     pos = car_node.getPosition()
     
     # 4. CSV 파일에 기록
-    writer.writerow([
-        f"{driver.getTime():.2f}",
-        f"{pos[0]:.6f}", f"{pos[1]:.6f}", f"{pos[2]:.6f}",
-        f"{current_steer:.6f}",
-        f"{wheel_degree: .6f}",
-        f"{handle_angle:.2f}",
-        f"{driver.getCurrentSpeed():.6f}",
-        f"{f_dist:.6f}",
-        f"{l_dist:.6f}",
-        f"{r_dist:.6f}",
-        f"{re_dist:.6f}"
-    ])
+    if current_time - last_save_time >= SAVE_INTERVAL:
+        writer.writerow([
+            f"{driver.getTime():.2f}",
+            f"{pos[0]:.6f}", f"{pos[1]:.6f}", f"{pos[2]:.6f}",
+            f"{current_steer:.6f}",
+            f"{wheel_degree: .6f}",
+            f"{handle_angle:.2f}",
+            f"{driver.getCurrentSpeed():.6f}",
+            f"{f_dist:.6f}",
+            f"{l_dist:.6f}",
+            f"{r_dist:.6f}",
+            f"{re_dist:.6f}"
+        ])
+        f.flush()
+        last_save_time = current_time
         
+        data = {
+            "time": round(driver.getTime(), 2),
+            "x": round(pos[0], 6),
+            "y": round(pos[1], 6),
+            "z": round(pos[2], 6),
+            "steer": current_steer,
+            "wheel_degree": int(wheel_degree),
+            "handle_angle": int(handle_angle),
+            "speed": round(driver.getCurrentSpeed(), 6),
+            "front_dist": f_dist,  
+            "left_dist": l_dist, 
+            "right_dist": r_dist, 
+            "rear_dist": re_dist 
+        }
+
+        kafka_producer.send('sensor-topic', value=data)
+        kafka_producer.flush()
+        print(f"[Kafka 전송] time={data['time']} | speed={data['speed']:.2f} | front={data['front_dist']:.2f} | left={data['left_dist']:.2f} | right={data['right_dist']:.2f} | rear={data['rear_dist']:.2f}")
     # (선택사항) 장애물이 1m 이내로 가까워지면 경고
     # --- 5. 방향별 충돌 경고 (1.0m 이내일 때) ---
     warning_msgs = []
@@ -143,4 +176,5 @@ while driver.step() != -1:
 
 # 파일 닫기
 f.close()
-print("데이터 저장 완료.")
+kafka_producer.close()
+print("데이터 전 완료.")
