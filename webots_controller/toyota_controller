@@ -1,40 +1,49 @@
 from vehicle import Driver
 from controller import Keyboard
 import csv
-import math  # 거리 계산을 위해 추가
+#조향각 계산을 위해
+import math
 
-# 1. 초기 설정
+# 1. 초기 설정해
 driver = Driver()
 timestep = int(driver.getBasicTimeStep())
 keyboard = Keyboard()
 keyboard.enable(timestep)
 
-# 차량 및 주변 장애물 노드 가져오기 (추가)
+# 차량 노드 가져오기 (위치 기록용)
 car_node = driver.getFromDef("mycar")
-car1_node = driver.getFromDef("left-obs") # 주변 차 1
-car2_node = driver.getFromDef("right-obs") # 주변 차 2
-br1_node = driver.getFromDef("rear_br1") # 주변 차 1
-br2_node = driver.getFromDef("rear_br2") # 주변 차 2
 
-# 노드 연결 확인 (하나라도 없으면 에러 메시지 출력)
-if not all([car_node, car1_node, car2_node, br1_node, br2_node]):
-    print("경고: 'mycar', 'CAR1' 또는 'CAR2' 노드를 찾을 수 없습니다. DEF 이름을 확인하세요.")
+# --- [추가] 모든 거리 센서 초기화 ---
+# Webots Scene Tree에 설정한 이름과 반드시 일치해야 합니다.
+sensor_names = [
+    "front_left_sensor", "front_right_sensor", "front_mid_sensor",
+    "left_sensor", "right_sensor", 
+    "rear_left_sensor", "rear_right_sensor", "rear_mid_sensor"
+]
+sensors = {}
+
+for name in sensor_names:
+    sensors[name] = driver.getDevice(name)
+    sensors[name].enable(timestep)
+# ----------------------------------
 
 # 제어 상수
+STEERING_RATIO = 12
 MAX_SPEED = 20.0
-MAX_STEER = 0.4
+MAX_STEER = 0.78
 SPEED_STEP = 2.0
-STEER_STEP = 0.5 # 기존 0.5는 너무 커서 부드러운 조향을 위해 수정
+STEER_STEP = 0.5 # 부드러운 조향을 위해 값을 낮췄습니다.
 
 current_speed = 0.0
 current_steer = 0.0
 
-# 2. CSV 파일 생성 및 헤더 작성 (주변 차 거리 컬럼 추가)
-f = open("manual_parking_data_with_dist.csv", "w", newline="")
+# 2. CSV 파일 생성 및 헤더 작성
+# 전방(f_dist)과 후방(re_dist)은 통합된 값을 저장합니다.
+f = open("parking_sensor_data.csv", "w", newline="")
 writer = csv.writer(f)
-writer.writerow(["time", "x", "y", "z", "steer", "speed", "dist_to_car1", "dist_to_car2", "rear_br1", "rear_br2"])
+writer.writerow(["time", "x", "y", "z", "steer", "wheel_degree", "handle_angle", "speed", "front_dist", "left_dist", "right_dist", "rear_dist"])
 
-print("키보드 조작 및 거리 데이터 수집 시작...")
+print("전방/측면/후방 센서 데이터 수집 시작...")
 
 while driver.step() != -1:
     key = keyboard.getKey()
@@ -45,14 +54,13 @@ while driver.step() != -1:
     elif key == Keyboard.DOWN:
         current_speed -= SPEED_STEP
     else:
-        # 키를 떼면 서서히 감속
         if abs(current_speed) < 1.0: current_speed = 0.0
-        else: current_speed *= 0.8
+        else: current_speed *= 0.6
 
     if key == Keyboard.LEFT:
         current_steer -= STEER_STEP
     elif key == Keyboard.RIGHT:
-        current_steer += STEER_STEP # 일반적인 차량 좌표계에선 우회전이 +값입니다.
+        current_steer += STEER_STEP
     else:
         if abs(current_steer) < 0.01: current_steer = 0.0
         else: current_steer *= 0.7
@@ -62,41 +70,76 @@ while driver.step() != -1:
 
     driver.setCruisingSpeed(current_speed)
     driver.setSteeringAngle(current_steer)
-    # -----------------------
+    
+    #바퀴와 핸들 각도 계산
+    # 1)Webots 제어값 (라디안)
+    wheel_radian = current_steer 
+    
+    # 2) 바퀴의 실제 꺾임 각도 (Degree)
+    wheel_degree = math.degrees(wheel_radian)
+    
+    # 3) 실제 핸들(스티어링 휠)의 회전 각도
+    handle_angle = wheel_degree * STEERING_RATIO
 
-    # 3. 실시간 데이터 추출 (내 차 및 주변 차 위치)
+
+    # --- 3. 실시간 센서 데이터 추출 ---
+    # 전방 통합 (좌/우/중간 중 최솟값)
+    fr_left = sensors["front_left_sensor"].getValue()
+    fr_right = sensors["front_right_sensor"].getValue()
+    fr_mid = sensors["front_mid_sensor"].getValue()
+    
+    f_dist = min(fr_left, fr_right, fr_mid)
+    
+    # 측면 데이터
+    l_dist = sensors["left_sensor"].getValue()
+    r_dist = sensors["right_sensor"].getValue()
+    
+    # 후방 통합 (좌/우/중간 중 최솟값)
+    re_left = sensors["rear_left_sensor"].getValue()
+    re_right = sensors["rear_right_sensor"].getValue()
+    re_mid = sensors["rear_mid_sensor"].getValue()
+    
+    re_dist = min(re_left, re_right, re_mid)
+    
+    # 내 차의 현재 위치 정보
     pos = car_node.getPosition()
-    c1_pos = car1_node.getPosition() if car1_node else [0, 0, 0]
-    c2_pos = car2_node.getPosition() if car2_node else [0, 0, 0]
-    br1_pos = br1_node.getPosition() if br1_node else [0, 0, 0]
-    br2_pos = br2_node.getPosition() if br2_node else [0, 0, 0]
     
-    curr_x, curr_y, curr_z = pos[0], pos[1], pos[2]
-    
-    # 4. 주변 차와의 거리 계산 (x, z 평면 기준 거리)
-    dist1 = math.sqrt((curr_x - c1_pos[0])**2 + (curr_z - c1_pos[2])**2)
-    dist2 = math.sqrt((curr_x - c2_pos[0])**2 + (curr_z - c2_pos[2])**2)
-    
-    br_dist1 = math.sqrt((curr_x - br1_pos[0])**2 + (curr_z - br1_pos[2])**2)
-    br_dist2 = math.sqrt((curr_x - br2_pos[0])**2 + (curr_z - br2_pos[2])**2)
-    
-    # 5. CSV 파일에 기록
+    # 4. CSV 파일에 기록
     writer.writerow([
-        driver.getTime(),
-        f"{pos[0]:.6f}",
-        f"{pos[1]:.6f}",
-        f"{pos[2]:.6f}",
+        f"{driver.getTime():.2f}",
+        f"{pos[0]:.6f}", f"{pos[1]:.6f}", f"{pos[2]:.6f}",
         f"{current_steer:.6f}",
+        f"{wheel_degree: .6f}",
+        f"{handle_angle:.2f}",
         f"{driver.getCurrentSpeed():.6f}",
-        f"{dist1:.6f}",
-        f"{dist2:.6f}",
-        f"{br_dist1:.6f}",
-        f"{br_dist2:.6f}"
+        f"{f_dist:.6f}",
+        f"{l_dist:.6f}",
+        f"{r_dist:.6f}",
+        f"{re_dist:.6f}"
     ])
+        
+    # (선택사항) 장애물이 1m 이내로 가까워지면 경고
+    # --- 5. 방향별 충돌 경고 (1.0m 이내일 때) ---
+    warning_msgs = []
     
-    # (선택사항) 너무 가까우면 터미널에 경고 표시
-    if dist1 < 2.0 or dist2 < 2.0 or br_dist1 < 2.0 or br_dist2 < 2.0:
-        print(f"! 충돌 위험 ! C1 거리: {dist1:.2f}m, C2 거리: {dist2:.2f}m")
+    if f_dist < 2.0:
+        if fr_left < 1.8 or fr_right < 1.8:
+            warning_msgs.append(f"전방 모서리 주의! (L:{fr_left:.2f}m | R:{fr_right:.2f}m)")
+        else:
+            warning_msgs.append(f"전방 중앙 주의! ({f_dist:.2f}m)")
+    if re_dist < 2.0:
+        if re_left < 1.8 or re_right < 1.8:
+            warning_msgs.append(f"후방 모서리 주의! (L:{re_left:.2f}m | R:{re_right:.2f}m)")
+        else:
+            warning_msgs.append(f"후방({re_dist:.2f}m)")
+    if l_dist < 0.8: # 측면은 차폭이 좁으니 조금 더 타이트하게(0.5m) 설정해봤어요
+        warning_msgs.append(f"좌측({l_dist:.2f}m)")
+    if r_dist < 0.8:
+        warning_msgs.append(f"우측({r_dist:.2f}m)")
+
+    # 위험 요소가 하나라도 있다면 출력
+    if warning_msgs:
+        print(f"[충돌 위험] " + " | ".join(warning_msgs))
 
 # 파일 닫기
 f.close()
