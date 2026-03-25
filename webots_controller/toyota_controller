@@ -6,14 +6,16 @@ import json
 from kafka import KafkaProducer
 
 
-# 1. 초기 설정해
+# 1. 초기 설정
 driver = Driver()
 timestep = int(driver.getBasicTimeStep())
 keyboard = Keyboard()
 keyboard.enable(timestep)
 
 kafka_producer = KafkaProducer(
-    bootstrap_servers=['192.168.201.98:50031'],
+    bootstrap_servers=['192.168.201.98:50031',
+                        '192.168.201.98:50032',
+                        '192.168.201.98:50033'],
     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     api_version=(3, 6, 1)
 )
@@ -21,8 +23,8 @@ kafka_producer = KafkaProducer(
 # 차량 노드 가져오기 (위치 기록용)
 car_node = driver.getFromDef("mycar")
 
-# --- [추가] 모든 거리 센서 초기화 ---
-# Webots Scene Tree에 설정한 이름과 반드시 일치해야 합니다.
+# --- 모든 거리 센서 초기화 ---
+# Webots Scene Tree에 설정한 이름과 반드시 일치해야 함.
 sensor_names = [
     "front_left_sensor", "front_right_sensor", "front_mid_sensor",
     "left_sensor", "right_sensor", 
@@ -40,13 +42,13 @@ STEERING_RATIO = 12
 MAX_SPEED = 20.0
 MAX_STEER = 0.78
 SPEED_STEP = 2.0
-STEER_STEP = 0.5 # 부드러운 조향을 위해 값을 낮췄습니다.
+STEER_STEP = 0.5
 
 current_speed = 0.0
 current_steer = 0.0
 
 # 2. CSV 파일 생성 및 헤더 작성
-# 전방(f_dist)과 후방(re_dist)은 통합된 값을 저장합니다.
+# 전방(f_dist)과 후방(re_dist)은 통합된 값을 저장
 f = open("parking_sensor_data.csv", "w", newline="")
 writer = csv.writer(f)
 writer.writerow(["time", "x", "y", "z", "steer", "wheel_degree", "handle_angle", "speed", "front_dist", "left_dist", "right_dist", "rear_dist"])
@@ -151,7 +153,8 @@ while driver.step() != -1:
         kafka_producer.send('sensor-topic', value=data)
         kafka_producer.flush()
         print(f"[Kafka 전송] time={data['time']} | speed={data['speed']:.2f} | front={data['front_dist']:.2f} | left={data['left_dist']:.2f} | right={data['right_dist']:.2f} | rear={data['rear_dist']:.2f}")
-    # (선택사항) 장애물이 1m 이내로 가까워지면 경고
+    
+    # 장애물이 1m 이내로 가까워지면 경고
     # --- 5. 방향별 충돌 경고 (1.0m 이내일 때) ---
     warning_msgs = []
     
@@ -165,7 +168,7 @@ while driver.step() != -1:
             warning_msgs.append(f"후방 모서리 주의! (L:{re_left:.2f}m | R:{re_right:.2f}m)")
         else:
             warning_msgs.append(f"후방({re_dist:.2f}m)")
-    if l_dist < 0.8: # 측면은 차폭이 좁으니 조금 더 타이트하게(0.5m) 설정해봤어요
+    if l_dist < 0.8: # 측면은 차폭이 좁으니 조금 더 타이트하게(0.5m) 설정
         warning_msgs.append(f"좌측({l_dist:.2f}m)")
     if r_dist < 0.8:
         warning_msgs.append(f"우측({r_dist:.2f}m)")
@@ -177,4 +180,4 @@ while driver.step() != -1:
 # 파일 닫기
 f.close()
 kafka_producer.close()
-print("데이터 전 완료.")
+print("데이터 전송 완료.")
